@@ -1,0 +1,58 @@
+# Dependencies
+node_modules
+*/node_modules
+.pnpm-store/
+
+# Build outputs (will be built in container)
+dist
+build
+.vite
+
+# Development files
+.git
+.gitignore
+*.md
+.ai-tasks
+docs/
+
+# Environment files
+.env
+.env.*
+**/.env
+**/.env.*
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Test files
+**/*.test.ts
+**/*.spec.ts
+e2e/
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# AI/Claude files
+.aider*
+.claude/
+
+# Docker files (don't need these inside the image)
+docker-compose*.yml
+Dockerfile
+
+# Uploads (runtime data, not part of the build)
+uploads/

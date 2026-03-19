@@ -1,0 +1,1 @@
+ALTER TABLE "organizations" ADD COLUMN "google_maps_api_key" varchar(255);
