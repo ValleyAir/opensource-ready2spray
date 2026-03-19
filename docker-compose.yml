@@ -23,10 +23,11 @@ services:
     ports:
       - "11434:11434"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:11434/ || exit 1"]
+      test: ["CMD-SHELL", "ollama list || exit 1"]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 10s
+      retries: 10
+      start_period: 15s
     restart: unless-stopped
     # Uncomment below for NVIDIA GPU acceleration (Linux only):
     # deploy:
@@ -44,7 +45,7 @@ services:
         condition: service_healthy
     restart: "no"
     command: >
-      sh -c "sleep 5 && curl -s http://ollama:11434/api/pull -d '{\"name\": \"qwen2.5:3b\"}' && echo 'Model pulled successfully'"
+      sh -c "sleep 5 && curl -sf http://ollama:11434/api/pull -d '{\"name\": \"qwen2.5:3b\"}' && echo 'Model pulled successfully'"
 
   app:
     build:
@@ -52,39 +53,37 @@ services:
       dockerfile: Dockerfile
       args:
         - VITE_APP_TITLE=${VITE_APP_TITLE:-Ready2Spray AI}
-        - VITE_APP_ID=${VITE_APP_ID}
-        - VITE_OAUTH_PORTAL_URL=${VITE_OAUTH_PORTAL_URL}
-        - VITE_STRIPE_PUBLISHABLE_KEY=${VITE_STRIPE_PUBLISHABLE_KEY}
+        - VITE_APP_ID=${VITE_APP_ID:-ready2spray-local}
     ports:
       - "${PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
       - DATABASE_URL=postgresql://${POSTGRES_USER:-ready2spray}:${POSTGRES_PASSWORD:-ready2spray_local_2024}@db:5432/${POSTGRES_DB:-ready2spray}
-      - JWT_SECRET=${JWT_SECRET}
-      - OWNER_EMAIL=${OWNER_EMAIL}
-      - OWNER_NAME=${OWNER_NAME}
-      - OWNER_OPEN_ID=${OWNER_OPEN_ID}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
-      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
-      - VITE_STRIPE_PUBLISHABLE_KEY=${VITE_STRIPE_PUBLISHABLE_KEY}
-      - MAILGUN_API_KEY=${MAILGUN_API_KEY}
-      - MAILGUN_DOMAIN=${MAILGUN_DOMAIN}
-      - MAILGUN_FROM_EMAIL=${MAILGUN_FROM_EMAIL}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-      - AWS_REGION=${AWS_REGION}
-      - AWS_S3_BUCKET=${AWS_S3_BUCKET}
-      - VITE_APP_TITLE=${VITE_APP_TITLE:-Ready2Spray AI}
-      - VITE_APP_ID=${VITE_APP_ID}
-      - VITE_OAUTH_PORTAL_URL=${VITE_OAUTH_PORTAL_URL}
-      - INVITATION_CODE=${INVITATION_CODE}
+      - JWT_SECRET=${JWT_SECRET:-dev-fallback-secret-change-me-in-production}
+      - VITE_DEV_AUTH=true
       - OLLAMA_URL=http://ollama:11434
       - OLLAMA_MODEL=qwen2.5:3b
       - LLM_PROVIDER=ollama
-      - VITE_DEV_AUTH=true
-      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY}
+      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OWNER_EMAIL=${OWNER_EMAIL:-admin@localhost}
+      - OWNER_NAME=${OWNER_NAME:-Local Admin}
+      - OWNER_OPEN_ID=${OWNER_OPEN_ID:-local-admin-001}
+      - INVITATION_CODE=${INVITATION_CODE:-BETA2024}
+      - VITE_APP_TITLE=${VITE_APP_TITLE:-Ready2Spray AI}
+      - VITE_APP_ID=${VITE_APP_ID:-ready2spray-local}
+      # Optional services (leave blank if not used)
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+      - VITE_STRIPE_PUBLISHABLE_KEY=${VITE_STRIPE_PUBLISHABLE_KEY:-}
+      - MAILGUN_API_KEY=${MAILGUN_API_KEY:-}
+      - MAILGUN_DOMAIN=${MAILGUN_DOMAIN:-}
+      - MAILGUN_FROM_EMAIL=${MAILGUN_FROM_EMAIL:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_REGION=${AWS_REGION:-}
+      - AWS_S3_BUCKET=${AWS_S3_BUCKET:-}
     depends_on:
       db:
         condition: service_healthy
@@ -96,7 +95,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
 
 volumes:
   postgres_data:
