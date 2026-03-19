@@ -140,10 +140,18 @@ pnpm dev
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+This software is licensed under the [Elastic License 2.0 (ELv2)](LICENSE).
+
+You can use, modify, and distribute this software freely. The main restriction: you cannot offer it as a hosted/managed service to third parties.
+
+## Trademark
+
+"Ready2Spray" is a trademark of GTM Planetary LLC. If you fork or modify this software, you must use a different name. See [TRADEMARK.md](TRADEMARK.md) for details.
 
 ## Contributing
 
 Contributions welcome! Please open an issue first to discuss what you'd like to change.
+
+By contributing, you agree that your contributions will be licensed under the Elastic License 2.0.
 
 Built by [GTM Planetary](https://github.com/wbaguley)
