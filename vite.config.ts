@@ -27,13 +27,11 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          'vendor-react': ['react', 'react-dom'],
+          'vendor-react': ['react', 'react-dom', '@tanstack/react-query'],
           'vendor-trpc': ['@trpc/client', '@trpc/react-query', 'superjson'],
           'vendor-charts': ['recharts'],
           'vendor-calendar': ['react-big-calendar', 'date-fns'],
           'vendor-pdf': ['jspdf', 'html2canvas'],
-          'vendor-motion': ['framer-motion'],
-          'vendor': ['@tanstack/react-query']
         }
       }
     }
