@@ -80,16 +80,16 @@ function GoogleMapsCard() {
           <div className="flex items-center gap-2">
             <MapPin className="h-5 w-5" />
             <div>
-              <CardTitle>Google Maps</CardTitle>
+              <CardTitle>Google Maps (Legacy)</CardTitle>
               <CardDescription>
-                Enable satellite map views, geocoding, and route planning
+                Optional: Legacy Google Maps API key. Maps now use Leaflet by default.
               </CardDescription>
             </div>
           </div>
           {hasKey ? (
             <Badge className="bg-green-100 text-green-800 hover:bg-green-100">
               <Check className="mr-1 h-3 w-3" />
-              Connected
+              Configured
             </Badge>
           ) : (
             <Badge variant="secondary">
@@ -102,27 +102,17 @@ function GoogleMapsCard() {
       <CardContent>
         <form onSubmit={handleSave} className="space-y-4">
           <div className="grid gap-2">
-            <Label htmlFor="googleMapsApiKey">API Key</Label>
+            <Label htmlFor="googleMapsApiKey">API Key (Optional)</Label>
             <Input
               id="googleMapsApiKey"
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Enter your Google Maps API key"
+              placeholder="Enter your Google Maps API key (optional)"
             />
             <p className="text-xs text-muted-foreground">
-              You can obtain a Google Maps API key from the{" "}
-              <a
-                href="https://console.cloud.google.com/apis/credentials"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary underline inline-flex items-center gap-1"
-              >
-                Google Cloud Console
-                <ExternalLink className="h-3 w-3" />
-              </a>
-              . Make sure to enable the Maps JavaScript API, Geocoding API, and
-              Directions API.
+              This field is optional. Maps now use Leaflet (OpenStreetMap) by default.
+              You can still configure a Google Maps API key for legacy functionality if needed.
             </p>
           </div>
           <div className="flex justify-end">

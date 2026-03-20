@@ -55,7 +55,7 @@ export function useMapEditor(initialAnnotations?: SiteAnnotations | null) {
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<DrawingTool>("select");
-  const overlayRefs = useRef<Map<string, google.maps.MVCObject>>(new Map());
+  const overlayRefs = useRef<Map<string, any>>(new Map());
 
   const selected = annotations.find((a) => a.id === selectedId) || null;
 
@@ -101,10 +101,10 @@ export function useMapEditor(initialAnnotations?: SiteAnnotations | null) {
   const removeShape = useCallback((id: string) => {
     setAnnotations((prev) => prev.filter((a) => a.id !== id));
     setSelectedId((prev) => (prev === id ? null : prev));
-    // Clean up the overlay ref
     const overlay = overlayRefs.current.get(id);
-    if (overlay && "setMap" in overlay) {
-      (overlay as any).setMap(null);
+    if (overlay) {
+      if (typeof overlay.remove === 'function') overlay.remove();
+      else if (typeof overlay.setMap === 'function') overlay.setMap(null);
     }
     overlayRefs.current.delete(id);
   }, []);
@@ -158,8 +158,9 @@ export function useMapEditor(initialAnnotations?: SiteAnnotations | null) {
       if (prev.length === 0) return prev;
       const removed = prev[prev.length - 1];
       const overlay = overlayRefs.current.get(removed.id);
-      if (overlay && "setMap" in overlay) {
-        (overlay as any).setMap(null);
+      if (overlay) {
+        if (typeof overlay.remove === 'function') overlay.remove();
+        else if (typeof overlay.setMap === 'function') overlay.setMap(null);
       }
       overlayRefs.current.delete(removed.id);
       return prev.slice(0, -1);

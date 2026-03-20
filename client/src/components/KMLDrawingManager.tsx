@@ -1,221 +1,289 @@
 import { useEffect, useRef, useState } from "react";
+import L from "leaflet";
+import { FeatureGroup } from "react-leaflet";
+import "@leaflet/draw/dist/leaflet.draw.css";
 import { Button } from "./ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { MapView } from "./Map";
-import { Download, Trash2, Square, Pencil, MapPin } from "lucide-react";
+import { Download, Trash2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 
 interface KMLDrawingManagerProps {
   jobId?: number;
   initialLocation?: { lat: number; lng: number };
-  onSave?: (kmlData: { name: string; kmlContent: string; fileSize: number }) => void;
+  onSave?: (kmlData: {
+    name: string;
+    kmlContent: string;
+    fileSize: number;
+  }) => void;
 }
 
-export function KMLDrawingManager({ jobId, initialLocation, onSave }: KMLDrawingManagerProps) {
+export function KMLDrawingManager({
+  jobId,
+  initialLocation,
+  onSave,
+}: KMLDrawingManagerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [mapName, setMapName] = useState("");
-  const [drawingManager, setDrawingManager] = useState<google.maps.drawing.DrawingManager | null>(null);
-  const [shapes, setShapes] = useState<google.maps.MVCObject[]>([]);
-  const mapRef = useRef<google.maps.Map | null>(null);
+  const [shapeCount, setShapeCount] = useState(0);
+  const mapRef = useRef<L.Map | null>(null);
+  const featureGroupRef = useRef<L.FeatureGroup | null>(null);
 
-  const handleMapReady = (map: google.maps.Map) => {
+  const handleMapReady = (map: L.Map) => {
     mapRef.current = map;
 
-    // Initialize Drawing Manager
-    const manager = new google.maps.drawing.DrawingManager({
-      drawingMode: null,
-      drawingControl: true,
-      drawingControlOptions: {
-        position: google.maps.ControlPosition.TOP_CENTER,
-        drawingModes: [
-          google.maps.drawing.OverlayType.MARKER,
-          google.maps.drawing.OverlayType.POLYGON,
-          google.maps.drawing.OverlayType.POLYLINE,
-          google.maps.drawing.OverlayType.RECTANGLE,
-          google.maps.drawing.OverlayType.CIRCLE,
-        ],
+    // Create feature group for drawn items
+    const featureGroup = new L.FeatureGroup();
+    featureGroupRef.current = featureGroup;
+    map.addLayer(featureGroup);
+
+    // Initialize Leaflet Draw
+    const drawControl = new (L.Control as any).Draw({
+      position: "topleft",
+      draw: {
+        polygon: {
+          shapeOptions: {
+            color: "#7c3aed",
+            weight: 2,
+            opacity: 0.8,
+            fill: true,
+            fillColor: "#7c3aed",
+            fillOpacity: 0.3,
+          },
+          allowIntersection: true,
+          drawError: {
+            color: "#b91c1c",
+            message: "<strong>Oh snap!</strong> you can't draw that!",
+          },
+          guidelineDistance: 25,
+        },
+        polyline: {
+          shapeOptions: {
+            color: "#7c3aed",
+            weight: 3,
+            opacity: 0.8,
+          },
+          metric: true,
+          feet: false,
+        },
+        rectangle: {
+          shapeOptions: {
+            color: "#7c3aed",
+            weight: 2,
+            opacity: 0.8,
+            fill: true,
+            fillColor: "#7c3aed",
+            fillOpacity: 0.3,
+          },
+        },
+        circle: {
+          shapeOptions: {
+            color: "#7c3aed",
+            weight: 2,
+            opacity: 0.8,
+            fill: true,
+            fillColor: "#7c3aed",
+            fillOpacity: 0.3,
+          },
+          metric: true,
+        },
+        marker: {
+          icon: L.icon({
+            iconUrl:
+              "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+            iconRetinaUrl:
+              "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+            shadowUrl:
+              "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34],
+            shadowSize: [41, 41],
+          }),
+        },
       },
-      markerOptions: {
-        draggable: true,
-      },
-      polygonOptions: {
-        editable: true,
-        draggable: true,
-        strokeColor: "#7c3aed",
-        strokeWeight: 2,
-        fillColor: "#7c3aed",
-        fillOpacity: 0.3,
-      },
-      polylineOptions: {
-        editable: true,
-        draggable: true,
-        strokeColor: "#7c3aed",
-        strokeWeight: 3,
-      },
-      rectangleOptions: {
-        editable: true,
-        draggable: true,
-        strokeColor: "#7c3aed",
-        strokeWeight: 2,
-        fillColor: "#7c3aed",
-        fillOpacity: 0.3,
-      },
-      circleOptions: {
-        editable: true,
-        draggable: true,
-        strokeColor: "#7c3aed",
-        strokeWeight: 2,
-        fillColor: "#7c3aed",
-        fillOpacity: 0.3,
+      edit: {
+        featureGroup: featureGroup,
+        poly: {
+          allowIntersection: false,
+        },
       },
     });
 
-    manager.setMap(map);
-    setDrawingManager(manager);
+    map.addControl(drawControl);
 
     // Listen for shape creation
-    google.maps.event.addListener(manager, "overlaycomplete", (event: google.maps.drawing.OverlayCompleteEvent) => {
-      setShapes(prev => [...prev, event.overlay]);
-      // Switch back to hand mode after drawing
-      manager.setDrawingMode(null);
+    map.on("draw:created", (e: any) => {
+      const layer = e.layer;
+      featureGroup.addLayer(layer);
+      updateShapeCount();
+    });
+
+    // Listen for shape edits
+    map.on("draw:edited", (e: any) => {
+      updateShapeCount();
+    });
+
+    // Listen for shape deletions
+    map.on("draw:deleted", (e: any) => {
+      updateShapeCount();
     });
   };
 
+  const updateShapeCount = () => {
+    if (featureGroupRef.current) {
+      const count = (Object.keys(featureGroupRef.current._layers) || []).length;
+      setShapeCount(count);
+    }
+  };
+
   const clearAllShapes = () => {
-    shapes.forEach(shape => {
-      if ('setMap' in shape && typeof shape.setMap === 'function') {
-        shape.setMap(null);
-      }
-    });
-    setShapes([]);
-    toast.success("All shapes cleared");
+    if (featureGroupRef.current) {
+      featureGroupRef.current.eachLayer((layer) => {
+        featureGroupRef.current?.removeLayer(layer);
+      });
+      updateShapeCount();
+      toast.success("All shapes cleared");
+    }
   };
 
   const generateKML = (): string => {
     let placemarks = "";
+    let shapeIndex = 0;
 
-    shapes.forEach((shape, index) => {
-      if (shape instanceof google.maps.Marker) {
-        const pos = shape.getPosition();
-        if (pos) {
+    if (featureGroupRef.current) {
+      featureGroupRef.current.eachLayer((layer: any) => {
+        shapeIndex++;
+
+        // Handle Marker
+        if (layer instanceof L.Marker) {
+          const latlng = layer.getLatLng();
           placemarks += `
     <Placemark>
-      <name>Marker ${index + 1}</name>
+      <name>Marker ${shapeIndex}</name>
       <Point>
-        <coordinates>${pos.lng()},${pos.lat()},0</coordinates>
+        <coordinates>${latlng.lng},${latlng.lat},0</coordinates>
       </Point>
     </Placemark>`;
         }
-      } else if (shape instanceof google.maps.Polygon) {
-        const path = shape.getPath();
-        const coords = [];
-        for (let i = 0; i < path.getLength(); i++) {
-          const point = path.getAt(i);
-          coords.push(`${point.lng()},${point.lat()},0`);
-        }
-        // Close the polygon by repeating the first point
-        if (coords.length > 0) {
-          const firstPoint = path.getAt(0);
-          coords.push(`${firstPoint.lng()},${firstPoint.lat()},0`);
-        }
-        placemarks += `
+        // Handle Polygon
+        else if (layer instanceof L.Polygon && !(layer instanceof L.Rectangle)) {
+          const latLngs = layer.getLatLngs()[0] || [];
+          const coords = (latLngs as L.LatLng[])
+            .map((point) => `${point.lng},${point.lat},0`)
+            .concat(`${(latLngs as L.LatLng[])[0].lng},${(latLngs as L.LatLng[])[0].lat},0`);
+
+          placemarks += `
     <Placemark>
-      <name>Polygon ${index + 1}</name>
+      <name>Polygon ${shapeIndex}</name>
       <Polygon>
         <outerBoundaryIs>
           <LinearRing>
             <coordinates>
-              ${coords.join('\n              ')}
+              ${coords.join("\n              ")}
             </coordinates>
           </LinearRing>
         </outerBoundaryIs>
       </Polygon>
     </Placemark>`;
-      } else if (shape instanceof google.maps.Polyline) {
-        const path = shape.getPath();
-        const coords = [];
-        for (let i = 0; i < path.getLength(); i++) {
-          const point = path.getAt(i);
-          coords.push(`${point.lng()},${point.lat()},0`);
         }
-        placemarks += `
+        // Handle Polyline
+        else if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)) {
+          const latLngs = layer.getLatLngs() as L.LatLng[];
+          const coords = latLngs.map((point) => `${point.lng},${point.lat},0`);
+
+          placemarks += `
     <Placemark>
-      <name>Path ${index + 1}</name>
+      <name>Path ${shapeIndex}</name>
       <LineString>
         <coordinates>
-          ${coords.join('\n          ')}
+          ${coords.join("\n          ")}
         </coordinates>
       </LineString>
     </Placemark>`;
-      } else if (shape instanceof google.maps.Rectangle) {
-        const bounds = shape.getBounds();
-        if (bounds) {
+        }
+        // Handle Rectangle
+        else if (layer instanceof L.Rectangle) {
+          const bounds = layer.getBounds();
           const ne = bounds.getNorthEast();
           const sw = bounds.getSouthWest();
           const coords = [
-            `${sw.lng()},${sw.lat()},0`,
-            `${ne.lng()},${sw.lat()},0`,
-            `${ne.lng()},${ne.lat()},0`,
-            `${sw.lng()},${ne.lat()},0`,
-            `${sw.lng()},${sw.lat()},0`, // Close the rectangle
+            `${sw.lng},${sw.lat},0`,
+            `${ne.lng},${sw.lat},0`,
+            `${ne.lng},${ne.lat},0`,
+            `${sw.lng},${ne.lat},0`,
+            `${sw.lng},${sw.lat},0`,
           ];
+
           placemarks += `
     <Placemark>
-      <name>Rectangle ${index + 1}</name>
+      <name>Rectangle ${shapeIndex}</name>
       <Polygon>
         <outerBoundaryIs>
           <LinearRing>
             <coordinates>
-              ${coords.join('\n              ')}
+              ${coords.join("\n              ")}
             </coordinates>
           </LinearRing>
         </outerBoundaryIs>
       </Polygon>
     </Placemark>`;
         }
-      } else if (shape instanceof google.maps.Circle) {
-        const center = shape.getCenter();
-        const radius = shape.getRadius();
-        if (center) {
+        // Handle Circle
+        else if (layer instanceof L.Circle && !(layer instanceof L.Rectangle)) {
+          const center = layer.getLatLng();
+          const radius = layer.getRadius();
+
           // Convert circle to polygon (approximate with 32 points)
           const coords = [];
           const numPoints = 32;
           for (let i = 0; i <= numPoints; i++) {
             const angle = (i / numPoints) * 2 * Math.PI;
-            const lat = center.lat() + (radius / 111320) * Math.cos(angle);
-            const lng = center.lng() + (radius / (111320 * Math.cos(center.lat() * Math.PI / 180))) * Math.sin(angle);
+            const lat = center.lat + (radius / 111320) * Math.cos(angle);
+            const lng =
+              center.lng +
+              (radius / (111320 * Math.cos((center.lat * Math.PI) / 180))) *
+                Math.sin(angle);
             coords.push(`${lng},${lat},0`);
           }
+
           placemarks += `
     <Placemark>
-      <name>Circle ${index + 1}</name>
+      <name>Circle ${shapeIndex}</name>
       <Polygon>
         <outerBoundaryIs>
           <LinearRing>
             <coordinates>
-              ${coords.join('\n              ')}
+              ${coords.join("\n              ")}
             </coordinates>
           </LinearRing>
         </outerBoundaryIs>
       </Polygon>
     </Placemark>`;
         }
-      }
-    });
+      });
+    }
 
     return `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
-    <name>${mapName || 'Spray Area Map'}</name>
+    <name>${mapName || "Spray Area Map"}</name>
     <description>Created with Ready2Spray AI</description>${placemarks}
   </Document>
 </kml>`;
   };
 
   const downloadKML = () => {
-    if (shapes.length === 0) {
+    if (shapeCount === 0) {
       toast.error("Please draw at least one shape on the map");
       return;
     }
@@ -226,11 +294,15 @@ export function KMLDrawingManager({ jobId, initialLocation, onSave }: KMLDrawing
     }
 
     const kmlContent = generateKML();
-    const blob = new Blob([kmlContent], { type: "application/vnd.google-earth.kml+xml" });
+    const blob = new Blob([kmlContent], {
+      type: "application/vnd.google-earth.kml+xml",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${mapName.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.kml`;
+    a.download = `${mapName
+      .replace(/[^a-z0-9]/gi, "_")
+      .toLowerCase()}.kml`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -249,7 +321,7 @@ export function KMLDrawingManager({ jobId, initialLocation, onSave }: KMLDrawing
   };
 
   const saveAndUpload = () => {
-    if (shapes.length === 0) {
+    if (shapeCount === 0) {
       toast.error("Please draw at least one shape on the map");
       return;
     }
@@ -260,7 +332,7 @@ export function KMLDrawingManager({ jobId, initialLocation, onSave }: KMLDrawing
     }
 
     const kmlContent = generateKML();
-    
+
     // Call onSave callback
     if (onSave) {
       onSave({
@@ -278,7 +350,11 @@ export function KMLDrawingManager({ jobId, initialLocation, onSave }: KMLDrawing
 
   return (
     <>
-      <Button onClick={() => setIsOpen(true)} variant="outline" className="gap-2">
+      <Button
+        onClick={() => setIsOpen(true)}
+        variant="outline"
+        className="gap-2"
+      >
         <Pencil className="h-4 w-4" />
         Create Map
       </Button>
@@ -288,7 +364,8 @@ export function KMLDrawingManager({ jobId, initialLocation, onSave }: KMLDrawing
           <DialogHeader>
             <DialogTitle>Create KML Map</DialogTitle>
             <DialogDescription>
-              Draw spray areas, boundaries, or markers on the map to create a KML file
+              Draw spray areas, boundaries, or markers on the map to create a
+              KML file
             </DialogDescription>
           </DialogHeader>
 
@@ -307,13 +384,14 @@ export function KMLDrawingManager({ jobId, initialLocation, onSave }: KMLDrawing
               <Label>Drawing Tools</Label>
               <div className="h-[500px] rounded-lg overflow-hidden border">
                 <MapView
-                  initialCenter={initialLocation || { lat: 37.4220, lng: -122.0841 }}
+                  initialCenter={initialLocation || { lat: 37.422, lng: -122.0841 }}
                   initialZoom={15}
                   onMapReady={handleMapReady}
                 />
               </div>
               <p className="text-sm text-muted-foreground">
-                Use the drawing tools at the top of the map to add shapes. Shapes can be edited and moved after creation.
+                Use the drawing tools at the top of the map to add shapes.
+                Shapes can be edited and moved after creation.
               </p>
             </div>
 
@@ -321,16 +399,16 @@ export function KMLDrawingManager({ jobId, initialLocation, onSave }: KMLDrawing
               <Button
                 variant="outline"
                 onClick={clearAllShapes}
-                disabled={shapes.length === 0}
+                disabled={shapeCount === 0}
                 className="gap-2"
               >
                 <Trash2 className="h-4 w-4" />
-                Clear All ({shapes.length})
+                Clear All ({shapeCount})
               </Button>
               <Button
                 variant="outline"
                 onClick={downloadKML}
-                disabled={shapes.length === 0}
+                disabled={shapeCount === 0}
                 className="gap-2"
               >
                 <Download className="h-4 w-4" />
@@ -343,7 +421,10 @@ export function KMLDrawingManager({ jobId, initialLocation, onSave }: KMLDrawing
             <Button variant="outline" onClick={() => setIsOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={saveAndUpload} disabled={shapes.length === 0 || !mapName.trim()}>
+            <Button
+              onClick={saveAndUpload}
+              disabled={shapeCount === 0 || !mapName.trim()}
+            >
               Save & Upload
             </Button>
           </DialogFooter>

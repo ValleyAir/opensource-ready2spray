@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useParams, useLocation } from "wouter";
+import L from "leaflet";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -445,41 +446,28 @@ export default function JobV2Detail() {
                       initialCenter={{ lat: parseFloat(job.locationLat.toString()), lng: parseFloat(job.locationLng.toString()) }}
                       initialZoom={15}
                       onMapReady={(map) => {
-                        // Add marker at job location
-                        const position = { lat: parseFloat(job.locationLat!.toString()), lng: parseFloat(job.locationLng!.toString()) };
-
-                        new google.maps.Marker({
-                          position,
-                          map,
-                          title: job.title,
-                          icon: {
-                            path: google.maps.SymbolPath.CIRCLE,
-                            scale: 10,
-                            fillColor: "#8b5cf6",
-                            fillOpacity: 1,
-                            strokeColor: "#ffffff",
-                            strokeWeight: 2,
-                          },
-                        });
+                        // Add marker at job location using Leaflet
+                        const position = [parseFloat(job.locationLat!.toString()), parseFloat(job.locationLng!.toString())];
+                        L.circleMarker(position as L.LatLngExpression, {
+                          radius: 10,
+                          fillColor: "#8b5cf6",
+                          fillOpacity: 1,
+                          weight: 2,
+                          color: "#7c3aed",
+                        }).addTo(map).bindPopup(job.title);
 
                         // Render treatment polygon if available
                         if (job.treatmentPolygon && (job.treatmentPolygon as any).coordinates) {
                           const poly = job.treatmentPolygon as any;
                           const ring = poly.coordinates[0];
                           if (ring) {
-                            const paths = ring.map((coord: [number, number]) => ({
-                              lat: coord[1],
-                              lng: coord[0],
-                            }));
-                            new google.maps.Polygon({
-                              paths,
+                            const paths = ring.map((coord: [number, number]) => [coord[1], coord[0]]);
+                            L.polygon(paths as L.LatLngExpression[], {
                               fillColor: "#8b5cf6",
                               fillOpacity: 0.2,
-                              strokeWeight: 2,
-                              strokeColor: "#7c3aed",
-                              editable: false,
-                              map,
-                            });
+                              weight: 2,
+                              color: "#7c3aed",
+                            }).addTo(map);
                           }
                         }
                       }}

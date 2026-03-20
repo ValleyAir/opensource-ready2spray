@@ -3,6 +3,9 @@ import { Button } from "@/components/ui/button";
 import { MapView } from "@/components/Map";
 import { useState, useCallback } from "react";
 import { toast } from "sonner";
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import 'leaflet-draw/dist/leaflet.draw.css';
 
 interface JobMapDrawerProps {
   open: boolean;
@@ -12,105 +15,141 @@ interface JobMapDrawerProps {
   initialCenter?: { lat: number; lng: number };
 }
 
+function calculateAreaSqMeters(coords: [number, number][]): number {
+  const R = 6371000;
+  let area = 0;
+  for (let i = 0; i < coords.length; i++) {
+    const j = (i + 1) % coords.length;
+    const lat1 = (coords[i][1] * Math.PI) / 180;
+    const lat2 = (coords[j][1] * Math.PI) / 180;
+    const dLng = ((coords[j][0] - coords[i][0]) * Math.PI) / 180;
+    area += dLng * (2 + Math.sin(lat1) + Math.sin(lat2));
+  }
+  return Math.abs((area * R * R) / 2);
+}
+
 export function JobMapDrawer({ open, onOpenChange, onSave, initialPolygon, initialCenter }: JobMapDrawerProps) {
   const [polygon, setPolygon] = useState<any>(initialPolygon || null);
   const [acres, setAcres] = useState<number>(0);
+  const [featureGroupRef, setFeatureGroupRef] = useState<L.FeatureGroup | null>(null);
 
-  const handleMapReady = useCallback((map: google.maps.Map) => {
-    const google = window.google;
-    const drawingManager = new google.maps.drawing.DrawingManager({
-      drawingMode: initialPolygon ? null : google.maps.drawing.OverlayType.POLYGON,
-      drawingControl: true,
-      drawingControlOptions: {
-        position: google.maps.ControlPosition.TOP_CENTER,
-        drawingModes: [google.maps.drawing.OverlayType.POLYGON],
+  const handleMapReady = useCallback((map: L.Map) => {
+    // Import leaflet-draw dynamically
+    const DrawControl = (L.Control as any).Draw || require('leaflet-draw').Control.Draw;
+
+    // Create a feature group to store editable layers
+    const featureGroup = new L.FeatureGroup();
+    map.addLayer(featureGroup);
+    setFeatureGroupRef(featureGroup);
+
+    // Add leaflet-draw control with purple color scheme
+    const drawControl = new DrawControl({
+      position: 'topleft',
+      draw: {
+        polygon: {
+          shapeOptions: {
+            color: '#7c3aed',
+            weight: 2,
+            opacity: 0.8,
+            fill: true,
+            fillColor: '#8b5cf6',
+            fillOpacity: 0.3,
+          },
+        },
+        polyline: false,
+        rectangle: false,
+        circle: false,
+        marker: false,
+        circlemarker: false,
       },
-      polygonOptions: {
-        fillColor: "#8b5cf6",
-        fillOpacity: 0.3,
-        strokeWeight: 2,
-        strokeColor: "#7c3aed",
-        clickable: true,
-        editable: true,
-        zIndex: 1,
+      edit: {
+        featureGroup: featureGroup,
+        edit: true,
+        remove: true,
       },
     });
-
-    drawingManager.setMap(map);
+    map.addControl(drawControl);
 
     // If there's an initial polygon, render it as editable
     if (initialPolygon && initialPolygon.coordinates) {
       const ring = initialPolygon.coordinates[0];
       if (ring) {
-        const paths = ring.map((coord: [number, number]) => ({
-          lat: coord[1],
-          lng: coord[0],
-        }));
+        // Convert [lng, lat] to [lat, lng] for Leaflet
+        const latLngArray = ring.map((coord: [number, number]) => [coord[1], coord[0]]);
 
-        const existingPolygon = new google.maps.Polygon({
-          paths,
-          fillColor: "#8b5cf6",
+        const leafletPolygon = L.polygon(latLngArray as L.LatLngExpression[], {
+          color: '#7c3aed',
+          weight: 2,
+          opacity: 0.8,
+          fill: true,
+          fillColor: '#8b5cf6',
           fillOpacity: 0.3,
-          strokeWeight: 2,
-          strokeColor: "#7c3aed",
-          editable: true,
-          map,
         });
 
-        const area = google.maps.geometry.spherical.computeArea(existingPolygon.getPath());
-        setAcres(area * 0.000247105);
+        featureGroup.addLayer(leafletPolygon);
 
-        google.maps.event.addListener(existingPolygon.getPath(), "set_at", () => {
-          updatePolygonData(existingPolygon, google);
-        });
-        google.maps.event.addListener(existingPolygon.getPath(), "insert_at", () => {
-          updatePolygonData(existingPolygon, google);
-        });
-
-        // Disable drawing mode since we already have a polygon
-        drawingManager.setDrawingMode(null);
+        // Calculate area
+        const areaSqm = calculateAreaSqMeters(ring);
+        const calculatedAcres = areaSqm * 0.000247105;
+        setAcres(calculatedAcres);
       }
     }
 
-    // Handle new polygon creation
-    google.maps.event.addListener(drawingManager, "overlaycomplete", (event: any) => {
-      if (event.type === google.maps.drawing.OverlayType.POLYGON) {
-        const newPolygon = event.overlay;
-        drawingManager.setDrawingMode(null);
-        updatePolygonData(newPolygon, google);
+    // Handle polygon drawing and editing
+    const updatePolygonFromLayer = (layer: L.Layer) => {
+      if (layer instanceof L.Polygon) {
+        const latLngs = layer.getLatLngs();
+        const coordinates: [number, number][] = [];
 
-        google.maps.event.addListener(newPolygon.getPath(), "set_at", () => {
-          updatePolygonData(newPolygon, google);
+        // Handle simple polygon
+        const handleRing = (ring: any) => {
+          ring.forEach((latLng: L.LatLng | any) => {
+            const lat = typeof latLng.lat === 'function' ? latLng.lat() : latLng.lat;
+            const lng = typeof latLng.lng === 'function' ? latLng.lng() : latLng.lng;
+            coordinates.push([lng, lat]);
+          });
+        };
+
+        if (Array.isArray(latLngs[0])) {
+          // Multi-polygon or polygon with holes
+          (latLngs as any[]).forEach(ring => handleRing(ring));
+        } else {
+          // Simple polygon
+          handleRing(latLngs);
+        }
+
+        // Close the polygon
+        if (coordinates.length > 0 && (coordinates[0][0] !== coordinates[coordinates.length - 1][0] || coordinates[0][1] !== coordinates[coordinates.length - 1][1])) {
+          coordinates.push(coordinates[0]);
+        }
+
+        const areaSqm = calculateAreaSqMeters(coordinates);
+        const calculatedAcres = areaSqm * 0.000247105;
+
+        setPolygon({
+          type: "Polygon",
+          coordinates: [coordinates],
         });
-        google.maps.event.addListener(newPolygon.getPath(), "insert_at", () => {
-          updatePolygonData(newPolygon, google);
-        });
+        setAcres(calculatedAcres);
       }
+    };
+
+    map.on('draw:created', (event: any) => {
+      const layer = event.layer;
+      featureGroup.addLayer(layer);
+      updatePolygonFromLayer(layer);
     });
 
-    const updatePolygonData = (poly: google.maps.Polygon, google: typeof window.google) => {
-      const path = poly.getPath();
-      const coordinates: [number, number][] = [];
-
-      for (let i = 0; i < path.getLength(); i++) {
-        const point = path.getAt(i);
-        coordinates.push([point.lng(), point.lat()]);
-      }
-
-      // Close the polygon
-      if (coordinates.length > 0) {
-        coordinates.push(coordinates[0]);
-      }
-
-      const area = google.maps.geometry.spherical.computeArea(path);
-      const calculatedAcres = area * 0.000247105;
-
-      setPolygon({
-        type: "Polygon",
-        coordinates: [coordinates],
+    map.on('draw:edited', (event: any) => {
+      event.layers.eachLayer((layer: L.Layer) => {
+        updatePolygonFromLayer(layer);
       });
-      setAcres(calculatedAcres);
-    };
+    });
+
+    map.on('draw:deleted', () => {
+      setPolygon(null);
+      setAcres(0);
+    });
   }, [initialPolygon]);
 
   const handleSave = () => {

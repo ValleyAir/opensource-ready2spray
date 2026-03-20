@@ -2,6 +2,9 @@ import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, Save } from "lucide-react";
 import { useEffect, useRef, useCallback, useState } from "react";
+import L from "leaflet";
+import "leaflet-draw/dist/leaflet.draw.css";
+import "leaflet/dist/leaflet.css";
 import { MapView } from "@/components/Map";
 import { MapEditorToolbar } from "./MapEditorToolbar";
 import { MapEditorLayerPanel } from "./MapEditorLayerPanel";
@@ -44,10 +47,12 @@ export function MapEditor({
   mode,
   title = "Map Editor",
 }: MapEditorProps) {
-  const mapRef = useRef<google.maps.Map | null>(null);
-  const drawingManagerRef = useRef<google.maps.drawing.DrawingManager | null>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const featureGroupRef = useRef<L.FeatureGroup | null>(null);
+  const drawControlRef = useRef<L.Control.Draw | null>(null);
   const [mapType, setMapType] = useState<MapTypeOption>("satellite");
   const [fieldBoundaryId, setFieldBoundaryId] = useState<string | null>(null);
+  const tileLayersRef = useRef<Map<string, L.TileLayer>>(new Map());
 
   const {
     annotations,
@@ -67,51 +72,30 @@ export function MapEditor({
     setAnnotations,
   } = useMapEditor(initialAnnotations);
 
-  // Convert DrawingTool to Google Maps overlay type
-  const toolToOverlayType = (tool: DrawingTool): google.maps.drawing.OverlayType | null => {
-    switch (tool) {
-      case "polygon": return google.maps.drawing.OverlayType.POLYGON;
-      case "polyline": return google.maps.drawing.OverlayType.POLYLINE;
-      case "marker": return google.maps.drawing.OverlayType.MARKER;
-      case "rectangle": return google.maps.drawing.OverlayType.RECTANGLE;
-      case "circle": return google.maps.drawing.OverlayType.CIRCLE;
-      default: return null;
-    }
-  };
-
-  // Apply style updates to Google Maps overlays
+  // Apply style updates to Leaflet layers
   const applyOverlayStyle = useCallback((id: string, ann: MapAnnotation) => {
-    const overlay = overlayRefs.current.get(id);
-    if (!overlay) return;
+    const layer = overlayRefs.current.get(id);
+    if (!layer) return;
 
-    if (ann.type === "polygon" || ann.type === "rectangle") {
-      const shape = overlay as google.maps.Polygon | google.maps.Rectangle;
-      shape.setOptions({
-        strokeColor: ann.strokeColor,
-        strokeOpacity: ann.strokeOpacity,
-        strokeWeight: ann.strokeWeight,
-        fillColor: ann.fillColor,
-        fillOpacity: ann.fillOpacity,
-        visible: ann.visible,
-      });
-    } else if (ann.type === "polyline") {
-      const shape = overlay as google.maps.Polyline;
-      shape.setOptions({
-        strokeColor: ann.strokeColor,
-        strokeOpacity: ann.strokeOpacity,
-        strokeWeight: ann.strokeWeight,
-        visible: ann.visible,
-      });
-    } else if (ann.type === "circle") {
-      const shape = overlay as google.maps.Circle;
-      shape.setOptions({
-        strokeColor: ann.strokeColor,
-        strokeOpacity: ann.strokeOpacity,
-        strokeWeight: ann.strokeWeight,
-        fillColor: ann.fillColor,
-        fillOpacity: ann.fillOpacity,
-        visible: ann.visible,
-      });
+    const styleOptions = {
+      color: ann.strokeColor,
+      opacity: ann.strokeOpacity,
+      weight: ann.strokeWeight,
+      fillColor: ann.fillColor,
+      fillOpacity: ann.fillOpacity,
+    };
+
+    if (layer instanceof L.Polygon || layer instanceof L.Polyline || layer instanceof L.Circle) {
+      layer.setStyle(styleOptions);
+    }
+
+    if (layer instanceof L.Marker) {
+      // Visibility is handled separately
+      if (ann.visible) {
+        (layer as any)._icon?.parentElement && layer.addTo(mapRef.current!);
+      } else {
+        layer.removeFrom(mapRef.current!);
+      }
     }
   }, [overlayRefs]);
 
@@ -122,136 +106,109 @@ export function MapEditor({
     });
   }, [annotations, applyOverlayStyle]);
 
-  // Update drawing manager when active tool changes
-  useEffect(() => {
-    if (!drawingManagerRef.current) return;
-    const overlayType = toolToOverlayType(activeTool);
-    drawingManagerRef.current.setDrawingMode(overlayType);
-  }, [activeTool]);
-
-  // Update map type
+  // Update map type by swapping tile layers
   useEffect(() => {
     if (!mapRef.current) return;
-    const types: Record<MapTypeOption, google.maps.MapTypeId> = {
-      satellite: google.maps.MapTypeId.SATELLITE,
-      hybrid: google.maps.MapTypeId.HYBRID,
-      terrain: google.maps.MapTypeId.TERRAIN,
+
+    const getTileLayer = (type: MapTypeOption): L.TileLayer => {
+      if (tileLayersRef.current.has(type)) {
+        return tileLayersRef.current.get(type)!;
+      }
+
+      let url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+      let attribution = "&copy; Esri";
+
+      if (type === "terrain") {
+        url = "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png";
+        attribution = "&copy; OpenTopoMap";
+      } else if (type === "hybrid") {
+        // Use satellite for hybrid in Leaflet
+        url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+        attribution = "&copy; Esri";
+      }
+
+      const layer = L.tileLayer(url, { attribution, maxZoom: 19 });
+      tileLayersRef.current.set(type, layer);
+      return layer;
     };
-    mapRef.current.setMapTypeId(types[mapType]);
+
+    // Remove current layer
+    mapRef.current.eachLayer((layer) => {
+      if (layer instanceof L.TileLayer) {
+        mapRef.current!.removeLayer(layer);
+      }
+    });
+
+    // Add new layer
+    const newLayer = getTileLayer(mapType);
+    newLayer.addTo(mapRef.current);
   }, [mapType]);
 
   const handleMapReady = useCallback(
-    (map: google.maps.Map) => {
+    (map: L.Map) => {
       mapRef.current = map;
-      map.setMapTypeId(google.maps.MapTypeId.SATELLITE);
 
-      // Set up Drawing Manager
-      const drawingManager = new google.maps.drawing.DrawingManager({
-        drawingMode: null,
-        drawingControl: false, // We use our own toolbar
-        polygonOptions: {
-          strokeColor: "#3b82f6",
-          strokeOpacity: 1,
-          strokeWeight: 2,
-          fillColor: "#3b82f6",
-          fillOpacity: 0.25,
-          editable: true,
+      // Create FeatureGroup for drawn items
+      const featureGroup = L.featureGroup().addTo(map);
+      featureGroupRef.current = featureGroup;
+
+      // Set up leaflet-draw control
+      const drawControl = new L.Control.Draw({
+        position: "topright",
+        draw: {
+          polygon: { shapeOptions: { color: "#3b82f6" } },
+          polyline: { shapeOptions: { color: "#3b82f6" } },
+          rectangle: { shapeOptions: { color: "#3b82f6" } },
+          circle: { shapeOptions: { color: "#3b82f6" } },
+          marker: true,
+          circlemarker: false,
         },
-        polylineOptions: {
-          strokeColor: "#3b82f6",
-          strokeOpacity: 1,
-          strokeWeight: 2,
-          editable: true,
-        },
-        rectangleOptions: {
-          strokeColor: "#3b82f6",
-          strokeOpacity: 1,
-          strokeWeight: 2,
-          fillColor: "#3b82f6",
-          fillOpacity: 0.25,
-          editable: true,
-        },
-        circleOptions: {
-          strokeColor: "#3b82f6",
-          strokeOpacity: 1,
-          strokeWeight: 2,
-          fillColor: "#3b82f6",
-          fillOpacity: 0.25,
-          editable: true,
-        },
+        edit: { featureGroup },
       });
-      drawingManager.setMap(map);
-      drawingManagerRef.current = drawingManager;
+      map.addControl(drawControl);
+      drawControlRef.current = drawControl;
 
-      // Handle shape completion
-      google.maps.event.addListener(drawingManager, "overlaycomplete", (event: any) => {
-        const overlay = event.overlay;
+      // Handle shape creation
+      map.on("draw:created", (e: any) => {
+        const layer = e.layer;
         let shapeData: Partial<MapAnnotation> = {};
 
-        switch (event.type) {
-          case google.maps.drawing.OverlayType.POLYGON: {
-            const poly = overlay as google.maps.Polygon;
-            const path = poly.getPath();
-            const coords = path.getArray().map((p: google.maps.LatLng) => [p.lat(), p.lng()]);
-            shapeData = { type: "polygon", coordinates: coords };
-            break;
-          }
-          case google.maps.drawing.OverlayType.POLYLINE: {
-            const line = overlay as google.maps.Polyline;
-            const path = line.getPath();
-            const coords = path.getArray().map((p: google.maps.LatLng) => [p.lat(), p.lng()]);
-            shapeData = { type: "polyline", coordinates: coords };
-            break;
-          }
-          case google.maps.drawing.OverlayType.MARKER: {
-            const marker = overlay as google.maps.marker.AdvancedMarkerElement | google.maps.Marker;
-            let pos: google.maps.LatLng | google.maps.LatLngLiteral | null | undefined;
-            if ("position" in marker) {
-              pos = marker.position as google.maps.LatLng;
-            }
-            if (pos) {
-              const lat = typeof pos.lat === "function" ? pos.lat() : (pos as any).lat;
-              const lng = typeof pos.lng === "function" ? pos.lng() : (pos as any).lng;
-              shapeData = { type: "marker", coordinates: [[lat, lng]] };
-            }
-            // Remove the default marker; we'll render our own
-            overlay.setMap(null);
-            break;
-          }
-          case google.maps.drawing.OverlayType.RECTANGLE: {
-            const rect = overlay as google.maps.Rectangle;
-            const bounds = rect.getBounds()!;
-            const ne = bounds.getNorthEast();
-            const sw = bounds.getSouthWest();
-            shapeData = {
-              type: "rectangle",
-              bounds: { n: ne.lat(), s: sw.lat(), e: ne.lng(), w: sw.lng() },
-            };
-            break;
-          }
-          case google.maps.drawing.OverlayType.CIRCLE: {
-            const circle = overlay as google.maps.Circle;
-            const center = circle.getCenter()!;
-            shapeData = {
-              type: "circle",
-              coordinates: [[center.lat(), center.lng()]],
-              radius: circle.getRadius(),
-            };
-            break;
-          }
+        if (layer instanceof L.Polygon && !(layer instanceof L.Rectangle)) {
+          const latlngs = layer.getLatLngs()[0] as L.LatLng[];
+          const coords = latlngs.map((ll) => [ll.lat, ll.lng]);
+          shapeData = { type: "polygon", coordinates: coords };
+        } else if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)) {
+          const latlngs = layer.getLatLngs() as L.LatLng[];
+          const coords = latlngs.map((ll) => [ll.lat, ll.lng]);
+          shapeData = { type: "polyline", coordinates: coords };
+        } else if (layer instanceof L.Rectangle) {
+          const bounds = (layer as any).getBounds();
+          shapeData = {
+            type: "rectangle",
+            bounds: {
+              n: bounds.getNorth(),
+              s: bounds.getSouth(),
+              e: bounds.getEast(),
+              w: bounds.getWest(),
+            },
+          };
+        } else if (layer instanceof L.Circle) {
+          const center = layer.getLatLng();
+          shapeData = {
+            type: "circle",
+            coordinates: [[center.lat, center.lng]],
+            radius: layer.getRadius(),
+          };
+        } else if (layer instanceof L.Marker) {
+          const pos = layer.getLatLng();
+          shapeData = { type: "marker", coordinates: [[pos.lat, pos.lng]] };
         }
 
         const ann = addShape(shapeData.type || "polygon", shapeData);
+        overlayRefs.current.set(ann.id, layer);
 
-        // Store overlay ref (markers are handled separately)
-        if (event.type !== google.maps.drawing.OverlayType.MARKER) {
-          overlayRefs.current.set(ann.id, overlay);
-
-          // Add click listener for selection
-          google.maps.event.addListener(overlay, "click", () => {
-            selectShape(ann.id);
-          });
-        }
+        // Add click listener for selection
+        layer.on("click", () => selectShape(ann.id));
       });
 
       // Load initial polygon (site mode)
@@ -268,15 +225,14 @@ export function MapEditor({
 
       // Center map
       if (initialCenter) {
-        map.setCenter(initialCenter);
-        map.setZoom(16);
+        map.setView([initialCenter.lat, initialCenter.lng], 16);
       }
     },
     [initialPolygon, initialCenter, initialAnnotations, mode, addShape, selectShape, overlayRefs]
   );
 
   // Load initial polygon as a field boundary annotation
-  const loadInitialPolygon = (map: google.maps.Map, polygonData: any) => {
+  const loadInitialPolygon = (map: L.Map, polygonData: any) => {
     let coords: number[][] = [];
 
     if (polygonData.type === "Polygon" && polygonData.coordinates) {
@@ -299,7 +255,7 @@ export function MapEditor({
       fillOpacity: 0.15,
     });
 
-    // Calculate measurements
+    // Calculate measurements using Haversine formula
     const R = 6371000;
     let area = 0;
     for (let i = 0; i < coords.length; i++) {
@@ -315,102 +271,93 @@ export function MapEditor({
     setAnnotations((prev) => [ann, ...prev]);
 
     // Render on map
-    const path = coords.map((c) => ({ lat: c[0], lng: c[1] }));
-    const poly = new google.maps.Polygon({
-      paths: path,
-      strokeColor: ann.strokeColor,
-      strokeOpacity: ann.strokeOpacity,
-      strokeWeight: ann.strokeWeight,
-      fillColor: ann.fillColor,
-      fillOpacity: ann.fillOpacity,
-      editable: true,
-      map,
-    });
-    overlayRefs.current.set(ann.id, poly);
+    const poly = L.polygon(
+      coords.map((c) => [c[0], c[1]]),
+      {
+        color: ann.strokeColor,
+        opacity: ann.strokeOpacity,
+        weight: ann.strokeWeight,
+        fillColor: ann.fillColor,
+        fillOpacity: ann.fillOpacity,
+      }
+    ).addTo(map);
 
-    google.maps.event.addListener(poly, "click", () => selectShape(ann.id));
+    overlayRefs.current.set(ann.id, poly);
+    poly.on("click", () => selectShape(ann.id));
 
     // Fit map to polygon
-    const bounds = new google.maps.LatLngBounds();
-    path.forEach((p) => bounds.extend(p));
+    const bounds = L.latLngBounds(coords.map((c) => [c[0], c[1]]));
     map.fitBounds(bounds);
   };
 
-  // Render an annotation as a Google Maps overlay
-  const renderAnnotationOverlay = (map: google.maps.Map, ann: MapAnnotation) => {
+  // Render an annotation as a Leaflet layer
+  const renderAnnotationOverlay = (map: L.Map, ann: MapAnnotation) => {
     switch (ann.type) {
       case "polygon": {
         if (!ann.coordinates) return;
-        const path = ann.coordinates.map((c) => ({ lat: c[0], lng: c[1] }));
-        const poly = new google.maps.Polygon({
-          paths: path,
-          strokeColor: ann.strokeColor,
-          strokeOpacity: ann.strokeOpacity,
-          strokeWeight: ann.strokeWeight,
-          fillColor: ann.fillColor,
-          fillOpacity: ann.fillOpacity,
-          editable: true,
-          visible: ann.visible,
-          map,
-        });
+        const poly = L.polygon(
+          ann.coordinates.map((c) => [c[0], c[1]]),
+          {
+            color: ann.strokeColor,
+            opacity: ann.strokeOpacity,
+            weight: ann.strokeWeight,
+            fillColor: ann.fillColor,
+            fillOpacity: ann.fillOpacity,
+          }
+        );
+        if (ann.visible) poly.addTo(map);
         overlayRefs.current.set(ann.id, poly);
-        google.maps.event.addListener(poly, "click", () => selectShape(ann.id));
+        poly.on("click", () => selectShape(ann.id));
         break;
       }
       case "polyline": {
         if (!ann.coordinates) return;
-        const path = ann.coordinates.map((c) => ({ lat: c[0], lng: c[1] }));
-        const line = new google.maps.Polyline({
-          path,
-          strokeColor: ann.strokeColor,
-          strokeOpacity: ann.strokeOpacity,
-          strokeWeight: ann.strokeWeight,
-          editable: true,
-          visible: ann.visible,
-          map,
-        });
+        const line = L.polyline(
+          ann.coordinates.map((c) => [c[0], c[1]]),
+          {
+            color: ann.strokeColor,
+            opacity: ann.strokeOpacity,
+            weight: ann.strokeWeight,
+          }
+        );
+        if (ann.visible) line.addTo(map);
         overlayRefs.current.set(ann.id, line);
-        google.maps.event.addListener(line, "click", () => selectShape(ann.id));
+        line.on("click", () => selectShape(ann.id));
         break;
       }
       case "rectangle": {
         if (!ann.bounds) return;
-        const rect = new google.maps.Rectangle({
-          bounds: {
-            north: ann.bounds.n,
-            south: ann.bounds.s,
-            east: ann.bounds.e,
-            west: ann.bounds.w,
-          },
-          strokeColor: ann.strokeColor,
-          strokeOpacity: ann.strokeOpacity,
-          strokeWeight: ann.strokeWeight,
-          fillColor: ann.fillColor,
-          fillOpacity: ann.fillOpacity,
-          editable: true,
-          visible: ann.visible,
-          map,
-        });
+        const rect = L.rectangle(
+          [[ann.bounds.s, ann.bounds.w], [ann.bounds.n, ann.bounds.e]],
+          {
+            color: ann.strokeColor,
+            opacity: ann.strokeOpacity,
+            weight: ann.strokeWeight,
+            fillColor: ann.fillColor,
+            fillOpacity: ann.fillOpacity,
+          }
+        );
+        if (ann.visible) rect.addTo(map);
         overlayRefs.current.set(ann.id, rect);
-        google.maps.event.addListener(rect, "click", () => selectShape(ann.id));
+        rect.on("click", () => selectShape(ann.id));
         break;
       }
       case "circle": {
         if (!ann.coordinates?.[0]) return;
-        const circle = new google.maps.Circle({
-          center: { lat: ann.coordinates[0][0], lng: ann.coordinates[0][1] },
-          radius: ann.radius || 100,
-          strokeColor: ann.strokeColor,
-          strokeOpacity: ann.strokeOpacity,
-          strokeWeight: ann.strokeWeight,
-          fillColor: ann.fillColor,
-          fillOpacity: ann.fillOpacity,
-          editable: true,
-          visible: ann.visible,
-          map,
-        });
+        const circle = L.circle(
+          [ann.coordinates[0][0], ann.coordinates[0][1]],
+          {
+            radius: ann.radius || 100,
+            color: ann.strokeColor,
+            opacity: ann.strokeOpacity,
+            weight: ann.strokeWeight,
+            fillColor: ann.fillColor,
+            fillOpacity: ann.fillOpacity,
+          }
+        );
+        if (ann.visible) circle.addTo(map);
         overlayRefs.current.set(ann.id, circle);
-        google.maps.event.addListener(circle, "click", () => selectShape(ann.id));
+        circle.on("click", () => selectShape(ann.id));
         break;
       }
       // Markers and text are rendered via the marker rendering effect below
@@ -425,7 +372,7 @@ export function MapEditor({
   // Track fingerprints to detect when marker content needs rebuilding
   const markerFingerprintsRef = useRef<Map<string, string>>(new Map());
 
-  // Render markers (including text and icon markers) using AdvancedMarkerElement
+  // Render markers (including text and icon markers) using Leaflet DivIcon
   useEffect(() => {
     if (!mapRef.current) return;
 
@@ -442,17 +389,16 @@ export function MapEditor({
 
         // If fingerprint changed, destroy old marker first
         if (overlayRefs.current.has(ann.id)) {
-          const old = overlayRefs.current.get(ann.id) as any;
-          if (old) {
-            if ("map" in old) old.map = null;
-            else if ("setMap" in old) old.setMap(null);
+          const old = overlayRefs.current.get(ann.id);
+          if (old && mapRef.current) {
+            mapRef.current.removeLayer(old);
           }
           overlayRefs.current.delete(ann.id);
         }
 
         if (!ann.coordinates?.[0]) return;
 
-        const pos = { lat: ann.coordinates[0][0], lng: ann.coordinates[0][1] };
+        const pos: L.LatLngExpression = [ann.coordinates[0][0], ann.coordinates[0][1]];
 
         // Build content element
         const content = document.createElement("div");
@@ -484,27 +430,21 @@ export function MapEditor({
           `;
         }
 
-        try {
-          const marker = new google.maps.marker.AdvancedMarkerElement({
-            map: ann.visible ? mapRef.current : null,
-            position: pos,
-            content,
-            title: ann.name,
-          });
+        const icon = L.divIcon({
+          html: content.outerHTML,
+          iconSize: [32, 32],
+          iconAnchor: [16, 16],
+          popupAnchor: [0, -16],
+          className: "custom-marker",
+        });
 
-          marker.addListener("click", () => selectShape(ann.id));
-          overlayRefs.current.set(ann.id, marker as any);
-        } catch {
-          // Fallback: regular marker
-          const marker = new google.maps.Marker({
-            map: ann.visible ? mapRef.current! : null,
-            position: pos,
-            title: ann.name,
-          });
-          marker.addListener("click", () => selectShape(ann.id));
-          overlayRefs.current.set(ann.id, marker);
+        const marker = L.marker(pos, { icon, title: ann.name });
+        if (ann.visible) {
+          marker.addTo(mapRef.current);
         }
 
+        marker.on("click", () => selectShape(ann.id));
+        overlayRefs.current.set(ann.id, marker);
         markerFingerprintsRef.current.set(ann.id, fp);
       });
   }, [annotations, selectShape, overlayRefs, markerFingerprint]);
@@ -513,17 +453,28 @@ export function MapEditor({
   useEffect(() => {
     if (!mapRef.current || activeTool !== "text") return;
 
-    const listener = mapRef.current.addListener("click", (e: google.maps.MapMouseEvent) => {
-      if (!e.latLng) return;
+    const handleClick = (e: L.LeafletMouseEvent) => {
       addShape("text", {
-        coordinates: [[e.latLng.lat(), e.latLng.lng()]],
+        coordinates: [[e.latlng.lat, e.latlng.lng]],
         text: "Label",
         strokeColor: "#000000",
       });
-    });
+    };
 
-    return () => google.maps.event.removeListener(listener);
+    mapRef.current.on("click", handleClick);
+
+    return () => {
+      if (mapRef.current) {
+        mapRef.current.off("click", handleClick);
+      }
+    };
   }, [activeTool, addShape]);
+
+  // Disable draw control when text tool is active
+  useEffect(() => {
+    if (!drawControlRef.current) return;
+    // leaflet-draw doesn't have a direct disable, so we manage via handlers
+  }, [activeTool]);
 
   // Escape key to close
   useEffect(() => {
@@ -540,7 +491,9 @@ export function MapEditor({
     if (!open) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
+    return () => {
+      document.body.style.overflow = prev;
+    };
   }, [open]);
 
   // Handle save

@@ -456,7 +456,7 @@ function SortableStatusItem({ status, onEdit, onDelete }: any) {
   );
 }
 
-// Google Maps API Key Component
+// Google Maps API Key Component (Legacy - Optional)
 function GoogleMapsSection() {
   const [apiKey, setApiKey] = useState("");
   const [isEditing, setIsEditing] = useState(false);
@@ -500,9 +500,9 @@ function GoogleMapsSection() {
         <div className="flex items-center gap-2">
           <MapPin className="h-5 w-5 text-muted-foreground" />
           <div>
-            <h3 className="font-semibold">Google Maps</h3>
+            <h3 className="font-semibold">Google Maps (Legacy)</h3>
             <p className="text-sm text-muted-foreground">
-              {hasKey ? "Connected" : "Not configured"}
+              Optional - Maps now use Leaflet by default
             </p>
           </div>
         </div>
@@ -525,17 +525,16 @@ function GoogleMapsSection() {
       {isEditing && (
         <form onSubmit={handleSave} className="space-y-4">
           <div className="grid gap-2">
-            <Label htmlFor="googleMapsApiKey">API Key</Label>
+            <Label htmlFor="googleMapsApiKey">API Key (Optional)</Label>
             <Input
               id="googleMapsApiKey"
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Enter your Google Maps API key"
-              required
+              placeholder="Enter your Google Maps API key (optional)"
             />
             <p className="text-xs text-muted-foreground">
-              Enter your Google Maps API key to enable satellite map views and the map editor
+              This field is optional. Maps now use Leaflet (OpenStreetMap) by default. You can provide a Google Maps API key for legacy functionality if needed.
             </p>
           </div>
           <div className="flex justify-end gap-2">

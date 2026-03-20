@@ -21,6 +21,7 @@ import {
 import { MapPin, Upload, ExternalLink, Trash2, Copy, Search, Pencil, Download, Eye } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import L from "leaflet";
 import { MapView } from "@/components/Map";
 import { MapEditor } from "@/components/map-editor/MapEditor";
 import type { SiteAnnotations, MapAnnotation } from "@/components/map-editor/types";
@@ -36,9 +37,8 @@ export default function Maps() {
   const [viewingMapId, setViewingMapId] = useState<number | null>(null);
   const [showMapEditor, setShowMapEditor] = useState(false);
 
-  const mapRef = useRef<google.maps.Map | null>(null);
-  const geocoderRef = useRef<google.maps.Geocoder | null>(null);
-  const viewPolygonRef = useRef<google.maps.Polygon | null>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const viewPolygonRef = useRef<L.GeoJSON | L.Polygon | null>(null);
 
   const { data: maps, isLoading } = trpc.maps.list.useQuery();
   const utils = trpc.useUtils();
@@ -76,9 +76,8 @@ export default function Maps() {
     },
   });
 
-  const handleMapReady = (map: google.maps.Map) => {
+  const handleMapReady = (map: L.Map) => {
     mapRef.current = map;
-    geocoderRef.current = new google.maps.Geocoder();
   };
 
   const handleSearch = () => {
@@ -89,22 +88,30 @@ export default function Maps() {
         toast.error("Please enter valid GPS coordinates");
         return;
       }
-      mapRef.current?.setCenter({ lat, lng });
-      mapRef.current?.setZoom(15);
+      mapRef.current?.setView([lat, lng], 15);
       return;
     }
 
-    if (!geocoderRef.current || !mapRef.current || !searchQuery.trim()) return;
+    if (!mapRef.current || !searchQuery.trim()) return;
 
-    geocoderRef.current.geocode({ address: searchQuery }, (results, status) => {
-      if (status === "OK" && results && results[0]) {
-        const location = results[0].geometry.location;
-        mapRef.current?.setCenter(location);
-        mapRef.current?.setZoom(15);
-      } else {
-        toast.error("Address not found");
-      }
-    });
+    // Use Nominatim for geocoding
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(
+      searchQuery
+    )}`;
+
+    fetch(url)
+      .then((res) => res.json())
+      .then((results) => {
+        if (results.length > 0) {
+          const result = results[0];
+          mapRef.current?.setView([parseFloat(result.lat), parseFloat(result.lon)], 15);
+        } else {
+          toast.error("Address not found");
+        }
+      })
+      .catch(() => {
+        toast.error("Failed to search address");
+      });
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -192,8 +199,8 @@ export default function Maps() {
 
   const handleViewMap = async (map: any) => {
     // Clear previous polygon
-    if (viewPolygonRef.current) {
-      viewPolygonRef.current.setMap(null);
+    if (viewPolygonRef.current && mapRef.current) {
+      mapRef.current.removeLayer(viewPolygonRef.current);
       viewPolygonRef.current = null;
     }
 
@@ -215,38 +222,42 @@ export default function Maps() {
         return;
       }
 
-      const bounds = new google.maps.LatLngBounds();
+      const bounds = L.latLngBounds([]);
       let drewShape = false;
 
       for (let i = 0; i < coordinateElements.length; i++) {
         const coordText = coordinateElements[i].textContent?.trim();
         if (!coordText) continue;
 
-        const coords = coordText.split(/\s+/).map((coord) => {
-          const [lng, lat] = coord.split(",").map(Number);
-          return { lat, lng };
-        }).filter((c) => !isNaN(c.lat) && !isNaN(c.lng));
+        const coords = coordText
+          .split(/\s+/)
+          .map((coord) => {
+            const [lng, lat] = coord.split(",").map(Number);
+            return { lat, lng };
+          })
+          .filter((c) => !isNaN(c.lat) && !isNaN(c.lng));
 
         if (coords.length === 0) continue;
 
-        coords.forEach((c) => bounds.extend(c));
+        coords.forEach((c) => bounds.extend([c.lat, c.lng]));
 
         if (coords.length >= 3) {
           // Draw as polygon
-          const polygon = new google.maps.Polygon({
-            paths: coords,
-            strokeColor: "#7c3aed",
-            strokeWeight: 2,
-            fillColor: "#7c3aed",
-            fillOpacity: 0.3,
-            map: mapRef.current,
-          });
+          const polygon = L.polygon(
+            coords.map((c) => [c.lat, c.lng]),
+            {
+              color: "#7c3aed",
+              weight: 2,
+              fillColor: "#7c3aed",
+              fillOpacity: 0.3,
+            }
+          ).addTo(mapRef.current);
           viewPolygonRef.current = polygon;
           drewShape = true;
         }
       }
 
-      if (!bounds.isEmpty()) {
+      if (bounds.isValid()) {
         mapRef.current.fitBounds(bounds);
       }
 
@@ -399,7 +410,7 @@ export default function Maps() {
         </div>
       </Card>
 
-      {/* Google Map Display */}
+      {/* Leaflet Map Display */}
       <Card className="overflow-hidden">
         <div className="h-[400px]">
           <MapView
@@ -482,7 +493,9 @@ export default function Maps() {
                           if (confirm("Are you sure you want to delete this map?")) {
                             deleteMapMutation.mutate({ id: map.id });
                             if (viewingMapId === map.id) {
-                              viewPolygonRef.current?.setMap(null);
+                              if (viewPolygonRef.current && mapRef.current) {
+                                mapRef.current.removeLayer(viewPolygonRef.current);
+                              }
                               viewPolygonRef.current = null;
                               setViewingMapId(null);
                             }
